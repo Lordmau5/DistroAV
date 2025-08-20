@@ -219,6 +219,7 @@ bool ndi_output_start(void *data)
 	send_desc.clock_video = false;
 	send_desc.clock_audio = false;
 
+	ndiLib->send_destroy(o->ndi_sender);
 	o->ndi_sender = ndiLib->send_create(&send_desc);
 	if (o->ndi_sender) {
 		o->started = obs_output_begin_data_capture(o->output, flags);
@@ -227,6 +228,8 @@ bool ndi_output_start(void *data)
 		} else {
 			obs_log(LOG_WARNING, "WARN-415 - NDI Sender data capture failed. '%s'", name);
 			obs_log(LOG_DEBUG, "'%s' ndi_output_start: data capture start failed", name);
+
+			ndiLib->send_destroy(o->ndi_sender);
 		}
 	} else {
 		obs_log(LOG_WARNING, "WARN-416 - NDI Sender initialisation failed. '%s'", name);

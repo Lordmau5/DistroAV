@@ -43,8 +43,8 @@ typedef struct {
 	uint32_t known_width;
 	uint32_t known_height;
 
-	gs_texrender_t *texrender;
-	gs_stagesurf_t *stagesurface;
+	// gs_texrender_t *texrender;
+	// gs_stagesurf_t *stagesurface;
 	uint8_t *video_data;
 	uint32_t video_linesize;
 
@@ -53,6 +53,7 @@ typedef struct {
 	uint8_t *audio_conv_buffer;
 	size_t audio_conv_buffer_size;
 
+	obs_output_t *output;
 	obs_canvas_t *canvas;
 } ndi_filter_t;
 
@@ -223,9 +224,29 @@ void ndi_filter_update(void *data, obs_data_t *settings)
 	auto name = obs_source_get_name(obs_source);
 	obs_log(LOG_DEBUG, "+ndi_filter_update(name='%s')", name);
 
-	ndi_sender_create(f, settings);
+	// ndi_sender_create(f, settings);
 
+	auto ndi_name = obs_data_get_string(settings, FLT_PROP_NAME);
 	auto groups = obs_data_get_string(settings, FLT_PROP_GROUPS);
+
+	obs_log(LOG_INFO, "NDI Name: '%s'", ndi_name);
+	obs_log(LOG_INFO, "NDI Groups: '%s'", groups);
+
+	if (f->output) {
+		obs_data_t *output_settings = obs_data_create();
+		obs_data_set_string(output_settings, "ndi_name", ndi_name);
+		obs_data_set_string(output_settings, "ndi_groups", groups);
+
+		obs_output_update(f->output, output_settings);
+
+		obs_data_release(output_settings);
+
+		if (obs_output_active(f->output)) {
+			obs_log(LOG_DEBUG, "ndi_filter_update: output is active, restarting output");
+			obs_output_stop(f->output);
+			obs_output_start(f->output);
+		}
+	}
 
 	obs_log(LOG_INFO, "NDI Filter Updated: '%s'", name);
 	obs_log(LOG_DEBUG, "-ndi_filter_update(name='%s', groups='%s')", name, groups);
@@ -249,13 +270,40 @@ void create_canvas(ndi_filter_t *f)
 		return;
 	}
 
-	f->canvas = obs_canvas_create_private(NULL, nullptr, DEVICE);
+	char unique_name[32];
+	snprintf(unique_name, sizeof(unique_name), "NDI_%p", (void *)f);
+
+	f->canvas = obs_canvas_create_private(unique_name, nullptr, DEVICE);
 	if (!f->canvas) {
 		obs_log(LOG_ERROR, "Failed to create canvas for NDI filter '%s'", obs_source_get_name(f->obs_source));
 		return;
 	}
 
 	obs_canvas_set_channel(f->canvas, 0, parent);
+
+	if (!f->output) {
+		auto obs_source = f->obs_source;
+		auto settings = obs_source_get_settings(obs_source);
+
+		const char *ndi_name = obs_data_get_string(settings, FLT_PROP_NAME);
+		const char *ndi_groups = nullptr;
+
+		obs_data_t *output_settings = obs_data_create();
+		obs_data_set_string(output_settings, "ndi_name", ndi_name);
+		obs_data_set_string(output_settings, "ndi_groups", ndi_groups);
+		obs_data_set_bool(output_settings, "uses_audio", false);
+
+		char unique_name[32];
+		snprintf(unique_name, sizeof(unique_name), "NDI_%p", (void *)f);
+
+		f->output = obs_output_create("ndi_output", unique_name, output_settings, NULL);
+		if (!f->output) {
+			obs_log(LOG_ERROR, "Failed to create output for NDI filter '%s'",
+				obs_source_get_name(f->obs_source));
+		}
+
+		obs_data_release(settings);
+	}
 }
 
 void *ndi_filter_create(obs_data_t *settings, obs_source_t *obs_source)
@@ -266,7 +314,7 @@ void *ndi_filter_create(obs_data_t *settings, obs_source_t *obs_source)
 
 	auto f = (ndi_filter_t *)bzalloc(sizeof(ndi_filter_t));
 	f->obs_source = obs_source;
-	f->texrender = gs_texrender_create(TEXFORMAT, GS_ZS_NONE);
+	// f->texrender = gs_texrender_create(TEXFORMAT, GS_ZS_NONE);
 	pthread_mutex_init(&f->ndi_sender_video_mutex, NULL);
 	pthread_mutex_init(&f->ndi_sender_audio_mutex, NULL);
 	obs_get_audio_info(&f->oai);
@@ -305,15 +353,23 @@ void ndi_filter_destroy(void *data)
 	auto name = obs_source_get_name(f->obs_source);
 	obs_log(LOG_DEBUG, "+ndi_filter_destroy('%s'...)", name);
 
-	pthread_mutex_lock(&f->ndi_sender_video_mutex);
-	pthread_mutex_lock(&f->ndi_sender_audio_mutex);
-	ndiLib->send_destroy(f->ndi_sender);
-	pthread_mutex_unlock(&f->ndi_sender_audio_mutex);
-	pthread_mutex_unlock(&f->ndi_sender_video_mutex);
+	if (f->ndi_sender) {
+		pthread_mutex_lock(&f->ndi_sender_video_mutex);
+		pthread_mutex_lock(&f->ndi_sender_audio_mutex);
+		ndiLib->send_destroy(f->ndi_sender);
+		pthread_mutex_unlock(&f->ndi_sender_audio_mutex);
+		pthread_mutex_unlock(&f->ndi_sender_video_mutex);
+	}
 
-	gs_stagesurface_unmap(f->stagesurface);
-	gs_stagesurface_destroy(f->stagesurface);
-	gs_texrender_destroy(f->texrender);
+	// gs_stagesurface_unmap(f->stagesurface);
+	// gs_stagesurface_destroy(f->stagesurface);
+	// gs_texrender_destroy(f->texrender);
+
+	if (f->output) {
+		obs_output_stop(f->output);
+		obs_output_release(f->output);
+		f->output = nullptr;
+	}
 
 	if (f->canvas) {
 		obs_canvas_remove(f->canvas);
@@ -362,7 +418,7 @@ void ndi_filter_tick(void *data, float)
 		return;
 	} else if (!f->ndi_sender) {
 		// If the sender is null then recreate it
-		ndi_sender_create(f, nullptr);
+		// ndi_sender_create(f, nullptr);
 	}
 
 	auto parent = obs_filter_get_parent(f->obs_source);
@@ -381,6 +437,11 @@ void ndi_filter_tick(void *data, float)
 			create_canvas(f);
 		}
 
+		if (!f->canvas) {
+			obs_log(LOG_DEBUG, "Failed to create canvas!");
+			return;
+		}
+
 		obs_get_video_info(&f->ovi);
 
 		f->ovi.output_format = VIDEO_FORMAT_BGRA;
@@ -392,24 +453,21 @@ void ndi_filter_tick(void *data, float)
 
 		obs_canvas_reset_video(f->canvas, &f->ovi);
 
-		auto video_output = obs_canvas_get_video(f->canvas);
-		video_output_connect(video_output, nullptr, ndi_filter_raw_video, f);
+		if (obs_output_active(f->output)) {
+			obs_output_stop(f->output);
+		}
+
+		video_t *video = obs_canvas_get_video(f->canvas);
+		if (!video) {
+			return;
+		}
+
+		obs_output_set_media(f->output, video, obs_get_audio());
+		bool started = obs_output_start(f->output);
+
+		if (!started)
+			obs_output_stop(f->output);
 	}
-
-	if (!f->canvas)
-		return;
-
-	// Get video output from canvas
-	video_t *video_output = obs_canvas_get_video(f->canvas);
-	if (!video_output)
-		return;
-
-	// Lock frame from video output struct video_frame frame;
-	struct video_frame frame = {};
-	if (!video_output_lock_frame(video_output, &frame, 1, video_output_get_frame_time(video_output)))
-		return;
-
-	video_output_unlock_frame(video_output);
 }
 
 void ndi_filter_videorender(void *data, gs_effect_t *)
