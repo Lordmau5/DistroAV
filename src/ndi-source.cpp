@@ -836,8 +836,16 @@ void ndi_source_thread_process_video2(ndi_source_t *source, NDIlib_video_frame_v
 	obs_video_frame->linesize[0] = ndi_video_frame->line_stride_in_bytes;
 	obs_video_frame->data[0] = ndi_video_frame->p_data;
 
-	video_format_get_parameters(config->yuv_colorspace, config->yuv_range, obs_video_frame->color_matrix,
-				    obs_video_frame->color_range_min, obs_video_frame->color_range_max);
+	// Print width, height, linesize, data and video format
+	obs_log(LOG_DEBUG,
+		"'%s' ndi_source_thread_process_video2: width=%d, height=%d, linesize[0]=%d, data=%p, format=%d",
+		obs_source_get_name(obs_source), //
+		obs_video_frame->width, obs_video_frame->height, obs_video_frame->linesize[0], obs_video_frame->data[0],
+		obs_video_frame->format);
+
+	video_format_get_parameters_for_format(config->yuv_colorspace, config->yuv_range, obs_video_frame->format,
+					       obs_video_frame->color_matrix, obs_video_frame->color_range_min,
+					       obs_video_frame->color_range_max);
 
 	obs_source_output_video(obs_source, obs_video_frame);
 }
